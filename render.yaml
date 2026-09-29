@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: iris-svm-model
+    runtime: python
+    buildCommand: "./build.sh"
+    startCommand: "python -m uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: NODE_VERSION
+        value: "20.12.2"
+      - key: ADMIN_USERNAME
+        value: "0814230306"
+      - key: ADMIN_PASSWORD
+        value: "0814230306"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: "HS256"
+      - key: JWT_EXPIRY_HOURS
+        value: "24"
+      - key: DB_DRIVER
+        value: "ODBC Driver 17 for SQL Server"
+      - key: DB_SERVER
+        value: "VICTUS2336\\SQLEXPRESS01"
+      - key: DB_NAME
+        value: "HMNC_PRO"
+      - key: DB_PORT
+        value: "1433"
+      - key: DB_ENCRYPT
+        value: "no"

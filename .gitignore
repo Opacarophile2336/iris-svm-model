@@ -27,6 +27,7 @@ node_modules/
 data/prediction_history.json
 data/model_history.json
 data/test_*
+!data/best_model.joblib
 
 .DS_Store
 Thumbs.db

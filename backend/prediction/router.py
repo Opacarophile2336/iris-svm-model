@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import io
+import logging
 import math
 import uuid
 from datetime import datetime
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -84,29 +87,34 @@ def predict(req: PredictRequest, current=Depends(require_user), db: Session = De
 
     # Save to history via prediction_service in SQL Server
     history_id = None
-    try:
-        probs = result.get("probabilities", {})
-        p_setosa = probs.get("setosa", 0.0)
-        p_versicolor = probs.get("versicolor", 0.0)
-        p_virginica = probs.get("virginica", 0.0)
-        record = prediction_service.create_prediction(
-            db=db,
-            user_id=current["username"],
-            sepal_length=req.sepal_length,
-            sepal_width=req.sepal_width,
-            petal_length=req.petal_length,
-            petal_width=req.petal_width,
-            predicted_species=result["predicted_species"],
-            probability_setosa=p_setosa / 100.0 if p_setosa > 1.0 else p_setosa,
-            probability_versicolor=p_versicolor / 100.0 if p_versicolor > 1.0 else p_versicolor,
-            probability_virginica=p_virginica / 100.0 if p_virginica > 1.0 else p_virginica,
-            model_name=result.get("model", "SVM"),
-            kernel=result.get("kernel", "rbf"),
-        )
-        db.commit()
-        history_id = record.PredictionID
-    except Exception:
-        db.rollback()
+    if db is not None:
+        try:
+            probs = result.get("probabilities", {})
+            p_setosa = probs.get("setosa", 0.0)
+            p_versicolor = probs.get("versicolor", 0.0)
+            p_virginica = probs.get("virginica", 0.0)
+            record = prediction_service.create_prediction(
+                db=db,
+                user_id=current["username"],
+                sepal_length=req.sepal_length,
+                sepal_width=req.sepal_width,
+                petal_length=req.petal_length,
+                petal_width=req.petal_width,
+                predicted_species=result["predicted_species"],
+                probability_setosa=p_setosa / 100.0 if p_setosa > 1.0 else p_setosa,
+                probability_versicolor=p_versicolor / 100.0 if p_versicolor > 1.0 else p_versicolor,
+                probability_virginica=p_virginica / 100.0 if p_virginica > 1.0 else p_virginica,
+                model_name=result.get("model", "SVM"),
+                kernel=result.get("kernel", "rbf"),
+            )
+            db.commit()
+            history_id = record.PredictionID
+        except Exception as e:
+            logger.warning(f"Could not record prediction to SQL Server: {e}")
+            try:
+                db.rollback()
+            except Exception:
+                pass
 
     return {**result, "history_id": history_id}
 
@@ -131,29 +139,33 @@ def predict_all(req: PredictRequest, current=Depends(require_user), db: Session 
 
     # Save primary result to history via prediction_service in SQL Server
     history_id = str(uuid.uuid4())[:8].upper()
-    try:
-        probs = primary_info.get("probabilities", {})
-        p_setosa = probs.get("setosa", 0.0)
-        p_versicolor = probs.get("versicolor", 0.0)
-        p_virginica = probs.get("virginica", 0.0)
-        record = prediction_service.create_prediction(
-            db=db,
-            user_id=current["username"],
-            sepal_length=req.sepal_length,
-            sepal_width=req.sepal_width,
-            petal_length=req.petal_length,
-            petal_width=req.petal_width,
-            predicted_species=primary_info["predicted_species"],
-            probability_setosa=p_setosa / 100.0 if p_setosa > 1.0 else p_setosa,
-            probability_versicolor=p_versicolor / 100.0 if p_versicolor > 1.0 else p_versicolor,
-            probability_virginica=p_virginica / 100.0 if p_virginica > 1.0 else p_virginica,
-            model_name="Deep Learning MLP" if primary_kernel == "mlp" else "SVM",
-            kernel=primary_kernel,
-        )
-        db.commit()
-        history_id = record.PredictionID
-    except Exception:
-        db.rollback()
+    if db is not None:
+        try:
+            probs = primary_info.get("probabilities", {})
+            p_setosa = probs.get("setosa", 0.0)
+            p_versicolor = probs.get("versicolor", 0.0)
+            p_virginica = probs.get("virginica", 0.0)
+            record = prediction_service.create_prediction(
+                db=db,
+                user_id=current["username"],
+                sepal_length=req.sepal_length,
+                sepal_width=req.sepal_width,
+                petal_length=req.petal_length,
+                petal_width=req.petal_width,
+                predicted_species=primary_info["predicted_species"],
+                probability_setosa=p_setosa / 100.0 if p_setosa > 1.0 else p_setosa,
+                probability_versicolor=p_versicolor / 100.0 if p_versicolor > 1.0 else p_versicolor,
+                probability_virginica=p_virginica / 100.0 if p_virginica > 1.0 else p_virginica,
+                model_name="Deep Learning MLP" if primary_kernel == "mlp" else "SVM",
+                kernel=primary_kernel,
+            )
+            db.commit()
+            history_id = record.PredictionID
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
 
     return {**multi_result, "history_id": history_id}
 
@@ -278,18 +290,48 @@ def user_history(
     When omitted, returns list format for full backward compatibility.
     """
     if any(param is not None for param in (page, page_size, species, kernel, model, start_date, end_date)):
-        return prediction_service.get_user_history_paginated(
-            db=db,
-            user_identity=current["username"],
-            page=page or 1,
-            page_size=page_size or 20,
-            species=species,
-            kernel=kernel,
-            model=model,
-            start_date=start_date,
-            end_date=end_date,
-        )
-    return prediction_service.get_user_history(db, current["username"])
+        if db is None:
+            return {
+                "items": [],
+                "total": 0,
+                "page": page or 1,
+                "page_size": page_size or 20,
+                "total_pages": 0,
+                "has_next": False,
+                "has_prev": False,
+                "notice": "SQL Server chưa được kết nối hoặc đang ngoại tuyến.",
+            }
+        try:
+            return prediction_service.get_user_history_paginated(
+                db=db,
+                user_identity=current["username"],
+                page=page or 1,
+                page_size=page_size or 20,
+                species=species,
+                kernel=kernel,
+                model=model,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to query personal history from SQL Server: {e}")
+            return {
+                "items": [],
+                "total": 0,
+                "page": page or 1,
+                "page_size": page_size or 20,
+                "total_pages": 0,
+                "has_next": False,
+                "has_prev": False,
+                "notice": "Không thể kết nối đến cơ sở dữ liệu SQL Server.",
+            }
+    if db is None:
+        return []
+    try:
+        return prediction_service.get_user_history(db, current["username"])
+    except Exception as e:
+        logger.warning(f"Failed to query personal history from SQL Server: {e}")
+        return []
 
 
 @router.get("/history/all")
@@ -310,18 +352,48 @@ def all_history(
     Supports pagination, filtering, and search by username.
     """
     if any(param is not None for param in (page, page_size, species, kernel, model, start_date, end_date, search)):
-        return prediction_service.get_all_history_paginated(
-            db=db,
-            page=page or 1,
-            page_size=page_size or 20,
-            species=species,
-            kernel=kernel,
-            model=model,
-            start_date=start_date,
-            end_date=end_date,
-            username_search=search,
-        )
-    return prediction_service.get_all_history(db)
+        if db is None:
+            return {
+                "items": [],
+                "total": 0,
+                "page": page or 1,
+                "page_size": page_size or 20,
+                "total_pages": 0,
+                "has_next": False,
+                "has_prev": False,
+                "notice": "SQL Server chưa được kết nối hoặc đang ngoại tuyến.",
+            }
+        try:
+            return prediction_service.get_all_history_paginated(
+                db=db,
+                page=page or 1,
+                page_size=page_size or 20,
+                species=species,
+                kernel=kernel,
+                model=model,
+                start_date=start_date,
+                end_date=end_date,
+                username_search=search,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to query all history from SQL Server: {e}")
+            return {
+                "items": [],
+                "total": 0,
+                "page": page or 1,
+                "page_size": page_size or 20,
+                "total_pages": 0,
+                "has_next": False,
+                "has_prev": False,
+                "notice": "Không thể kết nối đến cơ sở dữ liệu SQL Server.",
+            }
+    if db is None:
+        return []
+    try:
+        return prediction_service.get_all_history(db)
+    except Exception as e:
+        logger.warning(f"Failed to query all history from SQL Server: {e}")
+        return []
 
 
 @router.delete("/history/{prediction_id}")

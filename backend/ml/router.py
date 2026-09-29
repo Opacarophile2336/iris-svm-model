@@ -79,9 +79,13 @@ def decision_boundary_endpoint(
 @router.get("/model-history")
 def model_history(current=Depends(require_admin), db: Session = Depends(get_db)):
     """Return all model training history entries from SQL Server (with fallback)."""
-    sql_records = model_history_repository.get_model_history(db)
-    if sql_records:
-        return [model_history_repository.model_history_to_dict(r) for r in sql_records]
+    if db is not None:
+        try:
+            sql_records = model_history_repository.get_model_history(db)
+            if sql_records:
+                return [model_history_repository.model_history_to_dict(r) for r in sql_records]
+        except Exception as e:
+            logger.warning(f"Could not query model history from SQL Server: {e}")
 
     import json
     path = config.MODEL_HISTORY_PATH

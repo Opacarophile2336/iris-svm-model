@@ -62,6 +62,9 @@ def register_user(
     if username == config.ADMIN_USERNAME:
         raise RegistrationError("Username is not available.")
 
+    if db is None:
+        raise RegistrationError("Chức năng đăng ký tài khoản yêu cầu kết nối SQL Server. Database hiện đang ngoại tuyến.")
+
     existing = user_repository.find_user(db, username)
     if existing:
         raise RegistrationError("Username already exists.")
@@ -96,8 +99,17 @@ def authenticate(
             return {"username": username, "role": "ADMIN"}
         raise AuthenticationError("Invalid username or password.")
 
+    if db is None:
+        raise AuthenticationError(
+            "Cơ sở dữ liệu SQL Server đang ngoại tuyến. Vui lòng đăng nhập bằng tài khoản Quản trị viên (ADMIN) hoặc cấu hình database."
+        )
+
     # Check normal USER in database
-    user = user_repository.find_user(db, username)
+    try:
+        user = user_repository.find_user(db, username)
+    except Exception as e:
+        raise AuthenticationError(f"Không thể kết nối đến cơ sở dữ liệu SQL Server: {e}")
+
     if not user:
         raise AuthenticationError("Invalid username or password.")
     if not verify_password(password, user["password_hash"]):

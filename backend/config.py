@@ -20,11 +20,15 @@ ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "")
 DB_DRIVER: str = os.getenv("DB_DRIVER", "ODBC Driver 17 for SQL Server")
 DB_SERVER: str = os.getenv("DB_SERVER", r"VICTUS2336\SQLEXPRESS01")
 DB_NAME: str = os.getenv("DB_NAME", "HMNC_PRO")
+DB_USER: str = os.getenv("DB_USER", "")
+DB_PASSWORD: str = os.getenv("DB_PASSWORD", "")
+DB_PORT: str = os.getenv("DB_PORT", "1433")
 DB_TRUSTED_CONNECTION: str = os.getenv("DB_TRUSTED_CONNECTION", "yes")
 DB_TRUST_SERVER_CERTIFICATE: str = os.getenv(
     "DB_TRUST_SERVER_CERTIFICATE",
     "yes",
 )
+DB_ENCRYPT: str = os.getenv("DB_ENCRYPT", "yes" if os.getenv("DB_USER") else "no")
 
 # Paths
 PROJECT_ROOT = BASE_DIR.parent
