@@ -23,6 +23,7 @@ node_modules/
 *.bak
 *.xlsx
 *.log
+*.zip
 
 data/prediction_history.json
 data/model_history.json

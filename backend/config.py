@@ -8,13 +8,16 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 # JWT
-JWT_SECRET: str = os.getenv("JWT_SECRET", "hmnc-pro-fallback-secret")
+JWT_SECRET: str = os.getenv("JWT_SECRET") or os.getenv("JWT_SECRET_KEY") or "hmnc-pro-fallback-secret"
 JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRY_HOURS: int = int(os.getenv("JWT_EXPIRY_HOURS", "24"))
 
 # Admin credentials — NEVER sent to frontend
 ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME", "")
 ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "")
+
+# Database connection string (PostgreSQL for Supabase/Render; None for local SQL Server)
+DATABASE_URL: str | None = os.getenv("DATABASE_URL")
 
 # SQL Server database
 DB_DRIVER: str = os.getenv("DB_DRIVER", "ODBC Driver 17 for SQL Server")

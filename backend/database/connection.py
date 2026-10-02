@@ -1,54 +1,94 @@
-"""SQL Server database connection for HMNC_PRO."""
+"""Database connection adapter for HMNC_PRO.
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from urllib.parse import quote_plus
-
-from config import (
-    DB_DRIVER,
-    DB_SERVER,
-    DB_NAME,
-    DB_USER,
-    DB_PASSWORD,
-    DB_PORT,
-    DB_TRUSTED_CONNECTION,
-    DB_TRUST_SERVER_CERTIFICATE,
-    DB_ENCRYPT,
-)
+Dual Database Architecture:
+1. PRODUCTION: PostgreSQL via DATABASE_URL (psycopg2) for Supabase / Render
+2. LOCAL DEVELOPMENT: SQL Server via pyodbc (Windows Integrated Auth or SQL Auth)
+"""
+from __future__ import annotations
 
 import logging
+import os
+from typing import Optional, Tuple
+from urllib.parse import quote_plus
+
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import sessionmaker
+
+import config
 
 logger = logging.getLogger(__name__)
 
-# Build ODBC connection string based on authentication mode
-if DB_USER and DB_PASSWORD:
-    # SQL Server Authentication (Standard for Cloud / Azure SQL / Remote Linux)
-    ODBC_CONNECTION_STRING = (
-        f"DRIVER={{{DB_DRIVER}}};"
-        f"SERVER={DB_SERVER},{DB_PORT};"
-        f"DATABASE={DB_NAME};"
-        f"UID={DB_USER};"
-        f"PWD={DB_PASSWORD};"
-        f"Encrypt={DB_ENCRYPT};"
-        f"TrustServerCertificate={DB_TRUST_SERVER_CERTIFICATE};"
-    )
-else:
-    # Windows Integrated Authentication (Default for local development on Windows)
-    ODBC_CONNECTION_STRING = (
-        f"DRIVER={{{DB_DRIVER}}};"
-        f"SERVER={DB_SERVER};"
-        f"DATABASE={DB_NAME};"
-        f"Trusted_Connection={DB_TRUSTED_CONNECTION};"
-        f"TrustServerCertificate={DB_TRUST_SERVER_CERTIFICATE};"
-    )
 
-DATABASE_URL = (
-    "mssql+pyodbc:///?odbc_connect="
-    + quote_plus(ODBC_CONNECTION_STRING)
-)
+def build_sql_server_odbc_string() -> str:
+    """Build the ODBC connection string for local SQL Server."""
+    if config.DB_USER and config.DB_PASSWORD:
+        # SQL Server Authentication (Cloud / Azure SQL / Remote Linux)
+        return (
+            f"DRIVER={{{config.DB_DRIVER}}};"
+            f"SERVER={config.DB_SERVER},{config.DB_PORT};"
+            f"DATABASE={config.DB_NAME};"
+            f"UID={config.DB_USER};"
+            f"PWD={config.DB_PASSWORD};"
+            f"Encrypt={config.DB_ENCRYPT};"
+            f"TrustServerCertificate={config.DB_TRUST_SERVER_CERTIFICATE};"
+        )
+    else:
+        # Windows Integrated Authentication (Default for local development on Windows)
+        return (
+            f"DRIVER={{{config.DB_DRIVER}}};"
+            f"SERVER={config.DB_SERVER};"
+            f"DATABASE={config.DB_NAME};"
+            f"Trusted_Connection={config.DB_TRUSTED_CONNECTION};"
+            f"TrustServerCertificate={config.DB_TRUST_SERVER_CERTIFICATE};"
+        )
+
+
+def resolve_connection_url(raw_url: Optional[str] = None) -> Tuple[str, str]:
+    """Resolve the database dialect and normalized connection URL.
+
+    Args:
+        raw_url: Optional raw connection URL (defaults to DATABASE_URL environment variable).
+
+    Returns:
+        Tuple of (dialect, normalized_url)
+        where dialect is 'postgresql' or 'mssql'.
+    """
+    url = raw_url if raw_url is not None else os.getenv("DATABASE_URL")
+    if not url and hasattr(config, "DATABASE_URL"):
+        url = config.DATABASE_URL
+
+    if url and (
+        url.startswith("postgresql://")
+        or url.startswith("postgres://")
+        or url.startswith("postgresql+psycopg2://")
+    ):
+        # Normalize postgres:// and postgresql:// to postgresql+psycopg2:// for SQLAlchemy 2.0+
+        if url.startswith("postgres://"):
+            normalized = url.replace("postgres://", "postgresql+psycopg2://", 1)
+        elif url.startswith("postgresql://"):
+            normalized = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+        else:
+            normalized = url
+        return "postgresql", normalized
+
+    # Fallback to local SQL Server
+    odbc_str = build_sql_server_odbc_string()
+    sql_server_url = (
+        "mssql+pyodbc:///?odbc_connect="
+        + quote_plus(odbc_str)
+    )
+    return "mssql", sql_server_url
+
+
+# Backward compatibility export
+ODBC_CONNECTION_STRING = build_sql_server_odbc_string()
+
+# --- Active Engine & Session Initialization ---
+DB_DIALECT, DATABASE_URL = resolve_connection_url()
 
 try:
-    engine = create_engine(
+    engine: Optional[Engine] = create_engine(
         DATABASE_URL,
         pool_pre_ping=True,
         future=True,
@@ -58,8 +98,12 @@ try:
         autocommit=False,
         autoflush=False,
     )
+    if DB_DIALECT == "postgresql":
+        logger.info("Initialized PostgreSQL database engine via DATABASE_URL.")
+    else:
+        logger.info(f"Initialized SQL Server database engine for {config.DB_NAME} via pyodbc.")
 except Exception as e:
-    logger.warning(f"Could not initialize SQL Server engine: {e}")
+    logger.warning(f"Could not initialize {DB_DIALECT.upper()} database engine: {e}")
     engine = None
     SessionLocal = None
 

@@ -23,8 +23,8 @@ from prediction import service as prediction_service, batch_service, insights_se
 
 router = APIRouter(prefix="/prediction", tags=["Prediction"])
 
-# In-memory temporary cache for batch download: batch_id -> (results, metrics)
-_batch_cache: dict[str, tuple[list[dict], dict]] = {}
+# In-memory temporary cache for batch download: batch_id -> (owner_username, results, metrics)
+_batch_cache: dict[str, tuple[str, list[dict], dict]] = {}
 
 
 # ---------- Schemas ----------
@@ -199,7 +199,7 @@ async def batch_upload(file: UploadFile = File(...), current=Depends(require_use
         raise HTTPException(status_code=500, detail=f"Batch prediction failed: {e}")
 
     batch_id = str(uuid.uuid4())[:12]
-    _batch_cache[batch_id] = (results_rows, metrics_summary)
+    _batch_cache[batch_id] = (current["username"], results_rows, metrics_summary)
 
     # Keep cache bounded
     if len(_batch_cache) > 50:
@@ -222,8 +222,15 @@ def batch_export(req: BatchExportRequest, current=Depends(require_user)):
     results = None
     metrics = None
 
-    if req.batch_id and req.batch_id in _batch_cache:
-        results, metrics = _batch_cache[req.batch_id]
+    if req.batch_id:
+        if req.batch_id in _batch_cache:
+            owner, results, metrics = _batch_cache[req.batch_id]
+            is_admin = current.get("role") == "ADMIN"
+            if owner != current.get("username") and not is_admin:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You do not have permission to access this batch export.",
+                )
     elif req.rows:
         results = req.rows
         metrics = svm_service.get_all_kernels_metrics()
